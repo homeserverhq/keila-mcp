@@ -434,7 +434,7 @@ RESOURCE_TESTS = [
     {
         "label": "segment",
         "create_tool": "create_segment",
-        "create_params": {"name": make_name("Segment"), "filter": "{}"},
+        "create_params": {"name": make_name("Segment"), "filter": {}},
         "list_tool": "list_all_segments",
         "get_tool": "get_segment_by_id",
         "update_tool": "update_segment",
@@ -553,7 +553,7 @@ async def main():
 
         await run_test(
             session, "D1 update_contact_data", "update_contact_data",
-            {"id": du_id, "data": '{"city":"Munich"}'}
+            {"id": du_id, "data": {"city": "Munich"}}
         )
         await run_test(
             session, "D1b readback_data_update", "get_contact_by_id",
@@ -564,7 +564,7 @@ async def main():
         # D2: replace_contact_data
         await run_test(
             session, "D2 replace_contact_data", "replace_contact_data",
-            {"id": du_id, "data": '{"tags":["test"]}'}
+            {"id": du_id, "data": {"tags": ["test"]}}
         )
         await run_test(
             session, "D2b readback_replace_data", "get_contact_by_id",
@@ -636,8 +636,8 @@ async def main():
         # D6: submit_form — create form with email field and DOI disabled
         await run_test_with_store(
             session, "D0d create_for_submit", "create_form",
-            {"name": make_name("SubmitForm"), "fields": '[{"field":"email","required":true,"cast":true}]',
-             "settings": '{"double_opt_in_required":false}'},
+            {"name": make_name("SubmitForm"), "fields": [{"field": "email", "required": True, "cast": True}],
+             "settings": {"double_opt_in_required": False}},
             store_key="submit_form"
         )
         sf_id = pick_id("submit_form")
