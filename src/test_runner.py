@@ -1,21 +1,23 @@
 """
 End-to-end test harness for Keila MCP Server.
 
-Flat unconditional execution — zero conditional branching, zero exception
-handling, zero references to skipping. Every test runs every single time.
+Unconditional orchestration: the same sequence of tool calls runs on every
+run, threaded through the run store. No test-skipping, no conditional
+cleanups, no synthetic "nonexistent" parameter fallbacks. Exception handling
+is confined to defensive payload parsing in helper utilities only.
 """
 
+import asyncio
+import datetime
 import json
 import os
 import sys
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from toon_mcp import toon_to_json
-
-import asyncio
 
 MCP_SERVER_PORT = os.environ.get("MCP_SERVER_PORT", "")
 API_KEY = os.environ.get("API_KEY", "")
@@ -31,7 +33,7 @@ rid = uuid.uuid4().hex[:8]
 
 results: list[dict[str, Any]] = []
 store: dict[str, Any] = {}
-created: dict[str, str] = {}
+tested_tools: set[str] = set()
 
 
 class MCPSession:
@@ -174,9 +176,11 @@ async def run_test(
     label: str,
     tool: str,
     params: dict[str, Any] = None,
+    verify: Callable[[Any], Optional[str]] = None,
 ) -> bool:
     if params is None:
         params = {}
+    tested_tools.add(tool)
     result = await session.call_tool(tool, params)
     err = is_error(result)
     if err:
@@ -187,6 +191,15 @@ async def run_test(
         log(f"  FAIL {label}: {err}")
         return False
     data = extract_content(result)
+    if verify is not None:
+        verr = verify(data)
+        if verr:
+            results.append({
+                "label": label, "tool": tool, "status": "FAILED",
+                "reason": f"verify: {verr}"
+            })
+            log(f"  FAIL {label}: verify: {verr}")
+            return False
     results.append({
         "label": label, "tool": tool, "status": "PASSED", "data": data
     })
@@ -262,6 +275,7 @@ async def run_verify_delete(
 ) -> bool:
     if params is None:
         params = {}
+    tested_tools.add(get_tool)
     result = await session.call_tool(get_tool, params)
     err = is_error(result)
     if err:
@@ -309,14 +323,22 @@ LEAK_SCAN_CONFIG = [
 
 
 async def _run_leak_detection(session: MCPSession) -> None:
-    total_leaks = 0
     for entity_type, list_tool, list_params, id_key, name_key, delete_tool, delete_extra in LEAK_SCAN_CONFIG:
+        tested_tools.add(list_tool)
+        tested_tools.add(delete_tool)
+        label = f"Phase5 leak_scan_{entity_type}"
         result = await session.call_tool(list_tool, list_params or None)
         err = is_error(result)
         if err:
+            results.append({
+                "label": label, "tool": list_tool, "status": "FAILED",
+                "reason": f"leak scan list call failed: {err}"
+            })
+            log(f"  FAIL {label}: {err}")
             continue
         data = extract_content(result)
         items = get_list_items(data)
+        leaks = 0
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -326,51 +348,111 @@ async def _run_leak_detection(session: MCPSession) -> None:
             item_id = item.get(id_key)
             if item_id is None:
                 continue
-            total_leaks += 1
-            label = f"LEAK {entity_type} id={item_id} name={name_val[:40]}"
+            leaks += 1
+            leak_label = f"LEAK {entity_type} id={item_id} name={name_val[:40]}"
             results.append({
-                "label": label, "tool": delete_tool, "status": "FAILED",
+                "label": leak_label, "tool": delete_tool, "status": "FAILED",
                 "reason": f"Leaked {entity_type} found after test run — delete was not called or failed"
             })
-            log(f"  FAIL {label}")
+            log(f"  FAIL {leak_label}")
             del_params = {id_key: item_id, **delete_extra}
             await session.call_tool(delete_tool, del_params)
             log(f"       => cleaned up {entity_type} {item_id}")
 
-    if total_leaks == 0:
-        results.append({
-            "label": "LEAK no_leaks", "tool": "leak_detection",
-            "status": "PASSED", "data": {"leaks": 0}
-        })
-        log("  PASS LEAK: no test artifacts found")
+        if leaks == 0:
+            results.append({
+                "label": label, "tool": list_tool, "status": "PASSED",
+                "data": {"leaks": 0}
+            })
+            log(f"  PASS {label}")
+
+
+def _verify_field(field: str, expected: str) -> Callable[[Any], Optional[str]]:
+    def check(data: Any) -> Optional[str]:
+        if isinstance(data, dict) and data.get(field) == expected:
+            return None
+        return f"{field} != {expected!r}"
+    return check
+
+
+def _verify_email(expected: str) -> Callable[[Any], Optional[str]]:
+    def check(data: Any) -> Optional[str]:
+        if isinstance(data, dict) and data.get("email") == expected:
+            return None
+        return f"email != {expected!r}"
+    return check
+
+
+def _verify_data_value(expected: Any) -> Callable[[Any], Optional[str]]:
+    def check(data: Any) -> Optional[str]:
+        if isinstance(data, dict) and data.get("data") == expected:
+            return None
+        return f"data != {expected!r}"
+    return check
+
+
+def _verify_scheduled_for(data: Any) -> Optional[str]:
+    if isinstance(data, dict) and data.get("scheduled_for"):
+        return None
+    return "scheduled_for not set on campaign"
 
 
 RESOURCE_TESTS = [
-    ("contact", "create_contact",
-     {"email": make_name("Contact@example.com"), "first_name": "Test"},
-     "list_all_contacts", "get_contact_by_id",
-     "update_contact", {"first_name": "Updated"},
-     "delete_contact_by_id"),
-    ("campaign", "create_campaign",
-     {"subject": make_name("Campaign"), "settings_type": "text"},
-     "list_all_campaigns", "get_campaign_by_id",
-     "update_campaign", {"subject": f"Updated {make_name('Campaign')}"},
-     "delete_campaign_by_id"),
-    ("form", "create_form",
-     {"name": make_name("Form")},
-     "list_all_forms", "get_form_by_id",
-     "update_form", {"name": f"Updated {make_name('Form')}"},
-     "delete_form_by_id"),
-    ("segment", "create_segment",
-     {"name": make_name("Segment"), "filter": "{}"},
-     "list_all_segments", "get_segment_by_id",
-     "update_segment", {"name": f"Updated {make_name('Segment')}"},
-     "delete_segment_by_id"),
-    ("template", "create_template",
-     {"name": make_name("Template"), "type": "text"},
-     "list_all_templates", "get_template_by_id",
-     "update_template", {"name": f"Updated {make_name('Template')}"},
-     "delete_template_by_id"),
+    {
+        "label": "contact",
+        "create_tool": "create_contact",
+        "create_params": {"email": make_name("Contact@example.com"), "first_name": "Test"},
+        "list_tool": "list_all_contacts",
+        "get_tool": "get_contact_by_id",
+        "update_tool": "update_contact",
+        "update_params": {"first_name": "Updated"},
+        "delete_tool": "delete_contact_by_id",
+        "readback_verify": _verify_field("first_name", "Updated"),
+    },
+    {
+        "label": "campaign",
+        "create_tool": "create_campaign",
+        "create_params": {"subject": make_name("Campaign"), "settings_type": "text"},
+        "list_tool": "list_all_campaigns",
+        "get_tool": "get_campaign_by_id",
+        "update_tool": "update_campaign",
+        "update_params": {"subject": f"Updated {make_name('Campaign')}"},
+        "delete_tool": "delete_campaign_by_id",
+        "readback_verify": _verify_field("subject", f"Updated {make_name('Campaign')}"),
+    },
+    {
+        "label": "form",
+        "create_tool": "create_form",
+        "create_params": {"name": make_name("Form")},
+        "list_tool": "list_all_forms",
+        "get_tool": "get_form_by_id",
+        "update_tool": "update_form",
+        "update_params": {"name": f"Updated {make_name('Form')}"},
+        "delete_tool": "delete_form_by_id",
+        "readback_verify": _verify_field("name", f"Updated {make_name('Form')}"),
+    },
+    {
+        "label": "segment",
+        "create_tool": "create_segment",
+        "create_params": {"name": make_name("Segment"), "filter": "{}"},
+        "list_tool": "list_all_segments",
+        "get_tool": "get_segment_by_id",
+        "update_tool": "update_segment",
+        "update_params": {"name": f"Updated {make_name('Segment')}"},
+        "delete_tool": "delete_segment_by_id",
+        "readback_verify": _verify_field("name", f"Updated {make_name('Segment')}"),
+    },
+    {
+        "label": "template",
+        "create_tool": "create_template",
+        "create_params": {"name": make_name("Template"), "type": "text"},
+        "list_tool": "list_all_templates",
+        "get_tool": "get_template_by_id",
+        "update_tool": "update_template",
+        "update_params": {"name": f"Updated {make_name('Template')}"},
+        "delete_tool": "delete_template_by_id",
+        "readback_verify": _verify_field("name", f"Updated {make_name('Template')}"),
+    },
 ]
 
 
@@ -395,61 +477,65 @@ async def main():
         # Phase 1: Status & Health
         # ------------------------------------------------------------------
         log("\n=== Phase 1: Status & Health ===")
-        await run_test(session, "A1 check_server_status", "check_server_status")
+        await run_test(
+            session, "A1 check_server_status", "check_server_status",
+            verify=lambda d: None if isinstance(d, dict) and d.get("status") == "connected" else "backend unreachable (status != connected)"
+        )
 
         # ------------------------------------------------------------------
         # Phase 2: List Tools
         # ------------------------------------------------------------------
         log("\n=== Phase 2: List Tools ===")
-        for entry in RESOURCE_TESTS:
-            label = entry[0]
-            list_tool_name = entry[3]
-            await run_test(session, f"B2 list_{label}", list_tool_name)
+        for res in RESOURCE_TESTS:
+            await run_test(session, f"B2 list_{res['label']}", res["list_tool"])
         await run_test(session, "B2 list_sender", "list_all_senders")
 
         # ------------------------------------------------------------------
         # Phase 3: Resource CRUD Cycle
         # ------------------------------------------------------------------
         log("\n=== Phase 3: Resource CRUD Cycle ===")
-        for entry in RESOURCE_TESTS:
-            label, create_tool, create_params, _, get_tool, update_tool, \
-                update_params, delete_tool = entry
-            key = label.lower()
-
-            ok = await run_test_with_store(
-                session, f"C1 create_{key}", create_tool, create_params,
-                store_key=f"create_{key}"
-            )
-            cid = pick_id(f"create_{key}") if ok else None
-            if cid:
-                created[f"create_{key}"] = cid
+        for res in RESOURCE_TESTS:
+            label = res["label"]
+            create_tool = res["create_tool"]
+            create_params = res["create_params"]
+            get_tool = res["get_tool"]
+            update_tool = res["update_tool"]
+            delete_tool = res["delete_tool"]
 
             await run_test_with_store(
-                session, f"C2 get_{key}_by_id", get_tool,
-                {"id": cid} if cid else {"id": "nonexistent"},
-                store_key=f"get_{key}"
+                session, f"C1 create_{label}", create_tool, create_params,
+                store_key=f"create_{label}"
+            )
+            cid = pick_id(f"create_{label}")
+
+            await run_test_with_store(
+                session, f"C2 get_{label}_by_id", get_tool,
+                {"id": cid},
+                store_key=f"get_{label}"
             )
 
-            gid = pick_id(f"get_{key}") or cid
+            gid = pick_id(f"get_{label}") or cid
 
-            upd = dict(update_params)
-            upd["id"] = gid if gid else "nonexistent"
+            upd = dict(res["update_params"])
+            upd["id"] = gid
             await run_test(
-                session, f"C3 update_{key}", update_tool, upd
+                session, f"C3 update_{label}", update_tool, upd
             )
 
-            del_params = {"id": gid} if gid else {"id": "nonexistent"}
-            if key == "contact":
-                del_params["id_type"] = "id"
             await run_test(
-                session, f"C4 delete_{key}_by_id", delete_tool, del_params
+                session, f"C3b readback_{label}", get_tool,
+                {"id": gid, "include_all_fields": True},
+                verify=res["readback_verify"]
             )
 
-            get_id_param = {"id": gid} if gid else {"id": "nonexistent"}
-            if key == "contact":
-                get_id_param["id_type"] = "id"
+            await run_test(
+                session, f"C4 delete_{label}_by_id", delete_tool,
+                {"id": gid}
+            )
+
             await run_verify_delete(
-                session, f"C5 verify_delete_{key}", get_tool, get_id_param
+                session, f"C5 verify_delete_{label}", get_tool,
+                {"id": gid, "include_all_fields": True}
             )
 
         # ------------------------------------------------------------------
@@ -457,19 +543,22 @@ async def main():
         # ------------------------------------------------------------------
         log("\n=== Phase 4: Domain-Specific Tools ===")
 
-        # D1: update_contact_data — uses a fresh contact
+        # D1/D2: update_contact_data / replace_contact_data — fresh contact
         await run_test_with_store(
             session, "D0 create_for_data_update", "create_contact",
             {"email": make_name("DataUpdate@example.com"), "first_name": "Data"},
             store_key="data_update_contact"
         )
         du_id = pick_id("data_update_contact")
-        if du_id:
-            created["data_update_contact"] = du_id
 
         await run_test(
             session, "D1 update_contact_data", "update_contact_data",
             {"id": du_id, "data": '{"city":"Munich"}'}
+        )
+        await run_test(
+            session, "D1b readback_data_update", "get_contact_by_id",
+            {"id": du_id, "include_all_fields": True},
+            verify=_verify_data_value({"city": "Munich"})
         )
 
         # D2: replace_contact_data
@@ -477,19 +566,32 @@ async def main():
             session, "D2 replace_contact_data", "replace_contact_data",
             {"id": du_id, "data": '{"tags":["test"]}'}
         )
+        await run_test(
+            session, "D2b readback_replace_data", "get_contact_by_id",
+            {"id": du_id, "include_all_fields": True},
+            verify=_verify_data_value({"tags": ["test"]})
+        )
 
-        # D3: get_contact_by_id with id_type=email (create a contact first to ensure it exists)
+        await run_test(
+            session, "D0z cleanup_data_contact", "delete_contact_by_id",
+            {"id": du_id}
+        )
+
+        # D3: get_contact_by_id with id_type=email (fresh contact)
         await run_test_with_store(
             session, "D0a create_for_email_get", "create_contact",
             {"email": make_name("ByEmail@example.com"), "first_name": "EmailTest"},
             store_key="email_get_contact"
         )
         eg_id = pick_id("email_get_contact")
-        if eg_id:
-            created["email_get_contact"] = eg_id
         await run_test(
             session, "D3b get_by_email", "get_contact_by_id",
-            {"id": make_name("ByEmail@example.com"), "id_type": "email"}
+            {"id": make_name("ByEmail@example.com"), "id_type": "email"},
+            verify=_verify_email(make_name("ByEmail@example.com"))
+        )
+        await run_test(
+            session, "D0z cleanup_email_contact", "delete_contact_by_id",
+            {"id": eg_id}
         )
 
         # D4: send_campaign — create a fresh campaign and send it
@@ -499,56 +601,37 @@ async def main():
             store_key="send_campaign"
         )
         sc_id = pick_id("send_campaign")
-        if sc_id:
-            created["send_campaign"] = sc_id
         await run_test(
             session, "D4 send_campaign", "send_campaign",
-            {"id": sc_id} if sc_id else {"id": "nonexistent"}
+            {"id": sc_id},
+            verify=lambda d: None if isinstance(d, dict) and d.get("delivery_queued") else "delivery_queued != True"
+        )
+        await run_test(
+            session, "D0z cleanup_send_campaign", "delete_campaign_by_id",
+            {"id": sc_id}
         )
 
-        # D5: schedule_campaign — create campaign + schedule
+        # D5: schedule_campaign — create campaign + schedule + readback
         await run_test_with_store(
             session, "D0c create_for_schedule", "create_campaign",
             {"subject": make_name("SchedCamp"), "settings_type": "text"},
             store_key="schedule_campaign"
         )
         sch_id = pick_id("schedule_campaign")
-        if sch_id:
-            created["schedule_campaign"] = sch_id
-        import datetime
         future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S+00:00')
         await run_test(
             session, "D5 schedule_campaign", "schedule_campaign",
-            {"id": sch_id, "scheduled_for": future} if sch_id else {"id": "nonexistent", "scheduled_for": future}
+            {"id": sch_id, "scheduled_for": future}
         )
-
-        # Clean up the data update contact
-        if du_id:
-            await run_test(
-                session, "D0z cleanup_data_contact", "delete_contact_by_id",
-                {"id": du_id, "id_type": "id"}
-            )
-
-        # Clean up email get contact
-        if eg_id:
-            await run_test(
-                session, "D0z cleanup_email_contact", "delete_contact_by_id",
-                {"id": eg_id, "id_type": "id"}
-            )
-
-        # Clean up send campaign
-        if sc_id:
-            await run_test(
-                session, "D0z cleanup_send_campaign", "delete_campaign_by_id",
-                {"id": sc_id}
-            )
-
-        # Clean up schedule campaign
-        if sch_id:
-            await run_test(
-                session, "D0z cleanup_schedule_campaign", "delete_campaign_by_id",
-                {"id": sch_id}
-            )
+        await run_test(
+            session, "D5b readback_schedule", "get_campaign_by_id",
+            {"id": sch_id, "include_all_fields": True},
+            verify=_verify_scheduled_for
+        )
+        await run_test(
+            session, "D0z cleanup_schedule_campaign", "delete_campaign_by_id",
+            {"id": sch_id}
+        )
 
         # D6: submit_form — create form with email field and DOI disabled
         await run_test_with_store(
@@ -558,11 +641,19 @@ async def main():
             store_key="submit_form"
         )
         sf_id = pick_id("submit_form")
-        if sf_id:
-            created["submit_form"] = sf_id
         await run_test(
             session, "D6 submit_form", "submit_form",
-            {"id": sf_id, "email": make_name("FormSubmit@example.com")} if sf_id else {"id": "nonexistent", "email": make_name("FormSubmit@example.com")}
+            {"id": sf_id, "email": make_name("FormSubmit@example.com")},
+            verify=_verify_email(make_name("FormSubmit@example.com"))
+        )
+        await run_test(
+            session, "D0z delete_submit_form", "delete_form_by_id",
+            {"id": sf_id}
+        )
+        # Delete the contact created by submit_form
+        await run_test(
+            session, "D0z cleanup_submit_contact", "delete_contact_by_id",
+            {"id": make_name("FormSubmit@example.com"), "id_type": "email"}
         )
 
         # D7: render_transactional_message
@@ -581,23 +672,28 @@ async def main():
              "subject": f"t{rid}-Send", "text_body": "Hello Solo"}
         )
 
-        # Cleanup domain-specific resources
-        if sf_id:
-            await run_test(
-                session, "D0z delete_submit_form", "delete_form_by_id",
-                {"id": sf_id}
-            )
-            # Also delete the contact created by submit_form
-            await run_test(
-                session, "D0z cleanup_submit_contact", "delete_contact_by_id",
-                {"id": make_name("FormSubmit@example.com"), "id_type": "email"}
-            )
-
         # ------------------------------------------------------------------
         # Phase 5: Leak Detection
         # ------------------------------------------------------------------
         log("\n=== Phase 5: Leak Detection ===")
         await _run_leak_detection(session)
+
+        # ------------------------------------------------------------------
+        # Phase 6: Coverage Assertion — every discovered tool must be invoked
+        # ------------------------------------------------------------------
+        log("\n=== Phase 6: Coverage Assertion ===")
+        missing = sorted(set(tool_names) - tested_tools)
+        if missing:
+            for t in missing:
+                results.append({
+                    "label": f"COVERAGE missing tool {t}",
+                    "tool": "coverage_check",
+                    "status": "FAILED",
+                    "reason": "Discovered via tools/list but never invoked by any test"
+                })
+                log(f"  FAIL COVERAGE: {t} never invoked")
+        else:
+            log(f"  PASS COVERAGE: all {len(tool_names)} discovered tools invoked")
 
         # ------------------------------------------------------------------
         # Report Summary
