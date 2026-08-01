@@ -184,7 +184,7 @@ class FormField(BaseModel):
     )
     cast: Optional[bool] = Field(
         default=None,
-        description="true or false. Whether the submitted value is cast to the field type (e.g. integer) when stored",
+        description="true or false. Whether the field is enabled on the form. Enabled fields (true) are shown on the public form and their submitted values are stored on the contact; disabled fields (false) are hidden and ignored. Fields listed here are always enabled (forced to true).",
     )
     key: Optional[str] = Field(
         default=None,
@@ -230,8 +230,8 @@ class FormField(BaseModel):
 
 FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
     "email": {"label": "Email", "type": "email", "cast": True, "required": True, "placeholder": ""},
-    "first_name": {"label": "First name", "type": "string", "cast": False, "required": False, "placeholder": ""},
-    "last_name": {"label": "Last name", "type": "string", "cast": False, "required": False, "placeholder": ""},
+    "first_name": {"label": "First name", "type": "string", "cast": True, "required": False, "placeholder": ""},
+    "last_name": {"label": "Last name", "type": "string", "cast": True, "required": False, "placeholder": ""},
 }
 
 
@@ -239,9 +239,10 @@ def _normalize_field(fld: dict[str, Any]) -> dict[str, Any]:
     field_name = fld.get("field", "")
     defaults = FIELD_DEFAULTS.get(field_name, {})
     if field_name == "data" and "key" in fld:
-        defaults = {"label": fld["key"], "type": "string", "cast": False, "required": False, "placeholder": ""}
+        defaults = {"label": fld["key"], "type": "string", "cast": True, "required": False, "placeholder": ""}
     result = dict(defaults)
     result.update({k: v for k, v in fld.items() if v is not None})
+    result["cast"] = True
     return result
 
 
@@ -1000,7 +1001,7 @@ async def create_form(
         sender_id: Sender ID used for confirmation emails (e.g. nms_12345).
         template_id: Template ID used for confirmation emails (e.g. ntpl_12345).
         settings: Form settings object (see FormSettings). Any omitted settings are filled with safe defaults (captcha, colors, etc.).
-        fields: List of form field configurations (see FormField). At least one field with field="email" is required (e.g. [{"field": "email", "required": true, "cast": true}]). Custom fields use field="data" with a key (e.g. {"field": "data", "key": "city", "type": "string", "label": "City"}).
+        fields: List of form field configurations (see FormField). At least one field with field="email" is required. Every listed field is enabled on the form (shown on the public form and its value stored on the contact). Custom fields use field="data" with a key (e.g. {"field": "data", "key": "city", "type": "string", "label": "City"}).
     """
     if not fields:
         raise ValueError("fields must contain at least one field")
@@ -1047,7 +1048,7 @@ async def update_form(
         sender_id: Updated sender ID for confirmation emails (e.g. nms_12345).
         template_id: Updated template ID for confirmation emails (e.g. ntpl_12345).
         settings: Form settings object (see FormSettings). Merged into existing settings (e.g. {"double_opt_in_required": false}).
-        fields: List of form field configurations (see FormField). If provided at least one field with field="email" is required (e.g. [{"field": "email", "required": true, "cast": true}]).
+        fields: List of form field configurations (see FormField). If provided at least one field with field="email" is required. Every listed field is enabled on the form (shown on the public form and its value stored on the contact).
     """
     normalized_fields = None
     if fields is not None:

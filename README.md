@@ -20,7 +20,7 @@ with full CRUD, transactional messaging, and system operations.
   and maximize context window efficiency.
 - **🚀 Efficient Gets** — GET responses return only commonly used fields by
   default. Full objects are available via an `include_all_fields` flag.
-- **🧪 Comprehensive Testing** — 64 automated tests covering all tool
+- **🧪 Comprehensive Testing** — 75 automated tests covering all tool
   domains, run via the test runner pipeline.
 
 ## 🔧 Environment Variables

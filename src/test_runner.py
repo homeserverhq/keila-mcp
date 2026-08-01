@@ -460,13 +460,28 @@ RESOURCE_TESTS = [
     {
         "label": "form",
         "create_tool": "create_form",
-        "create_params": {"name": make_name("Form"), "fields": [{"field": "email", "required": True, "cast": True}]},
+        "create_params": {
+            "name": make_name("Form"),
+            "fields": [
+                {"field": "email", "required": True, "cast": True},
+                {"field": "first_name", "required": True, "type": "string"},
+                {"field": "last_name", "required": True, "type": "string", "cast": False},
+                {"field": "data", "key": "feedback", "label": "Feedback", "type": "string"},
+            ],
+        },
         "list_tool": "list_all_forms",
         "get_tool": "get_form_by_id",
         "update_tool": "update_form",
         "update_params": {"name": f"Updated {make_name('Form')}"},
         "delete_tool": "delete_form_by_id",
-        "readback_verify": lambda d: None if isinstance(d, dict) and d.get("name") == f"Updated {make_name('Form')}" and isinstance(d.get("settings"), dict) and len(d["settings"]) > 5 else f"readback mismatch (settings empty or name wrong)",
+        "readback_verify": lambda d: None if (
+            isinstance(d, dict)
+            and d.get("name") == f"Updated {make_name('Form')}"
+            and isinstance(d.get("settings"), dict) and len(d["settings"]) > 5
+            and isinstance(d.get("fields"), list)
+            and {f.get("field") for f in d["fields"]} == {"email", "first_name", "last_name", "data"}
+            and all(f.get("cast") is True for f in d["fields"])
+        ) else f"readback mismatch (fields not all enabled or missing)",
     },
     {
         "label": "segment",
