@@ -424,19 +424,19 @@ async def check_server_status(ctx: Context = None) -> dict[str, Any]:
 
 @mcp.tool(tags={"read", "basic", "keila"})
 async def list_all_contacts(
-    include_all_fields: bool = False,
     page: int = 0,
     page_size: int = 50,
     filter: Optional[SegmentFilter] = None,
+    include_all_fields: bool = False,
     ctx: Context = None,
 ) -> dict[str, Any]:
     """List all contact records.
 
     Args:
-        include_all_fields: true or false (Default: false).
         page: Page number, 0 (first page) or higher. (e.g. 0) (Default: 0).
         page_size: Records per page, 1 or higher. (e.g. 50) (Default: 50).
         filter: MongoDB-style filter object (e.g. {"email": {"$like": "%keila.io"}} or {"status": "active"}). Operators: $not, $or, $gt, $gte, $lt, $lte, $empty, $in, or $like; custom data fields via data.<field> (e.g. {"data.city": {"$in": ["Munich", "Berlin"]}}).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_contacts(
         get_user_token(),
@@ -460,7 +460,7 @@ async def get_contact_by_id(
     Args:
         id: Contact ID (e.g. nc_12345), email address, or external ID, depending on id_type.
         id_type: id, email, or external_id (Default: id).
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     return await get_client().get_contact_by_id(
         id, get_user_token(), include_all_fields=include_all_fields, id_type=id_type
@@ -606,7 +606,7 @@ async def list_all_campaigns(
     """List all campaign records.
 
     Args:
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_campaigns(
         get_user_token(),
@@ -625,7 +625,7 @@ async def get_campaign_by_id(
 
     Args:
         id: Campaign ID (e.g. nmc_12345).
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     return await get_client().get_campaign_by_id(
         id, get_user_token(), include_all_fields=include_all_fields
@@ -805,7 +805,7 @@ async def list_all_forms(
     """List all form records.
 
     Args:
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_forms(
         get_user_token(),
@@ -824,7 +824,7 @@ async def get_form_by_id(
 
     Args:
         id: Form ID (e.g. nfrm_12345).
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     return await get_client().get_form_by_id(
         id, get_user_token(), include_all_fields=include_all_fields
@@ -958,7 +958,7 @@ async def list_all_segments(
     """List all segment records.
 
     Args:
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_segments(
         get_user_token(),
@@ -977,7 +977,7 @@ async def get_segment_by_id(
 
     Args:
         id: Segment ID (e.g. nsgm_12345).
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     return await get_client().get_segment_by_id(
         id, get_user_token(), include_all_fields=include_all_fields
@@ -1052,7 +1052,7 @@ async def list_all_templates(
     """List all template records.
 
     Args:
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_templates(
         get_user_token(),
@@ -1071,7 +1071,7 @@ async def get_template_by_id(
 
     Args:
         id: Template ID (e.g. ntpl_12345).
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     return await get_client().get_template_by_id(
         id, get_user_token(), include_all_fields=include_all_fields
@@ -1173,7 +1173,7 @@ async def list_all_senders(
     """List all sender records.
 
     Args:
-        include_all_fields: true or false (Default: false).
+        include_all_fields: Default False (common fields only). Set True for all fields.
     """
     data = await get_client().list_all_senders(
         get_user_token(),
