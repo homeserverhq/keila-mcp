@@ -32,14 +32,15 @@ def _unwrap(data: Any) -> Any:
 
 
 def _normalize_datetime(value: str) -> str:
-    if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$', value):
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        offset = parsed.strftime('%z')
+        offset_formatted = f'{offset[:3]}:{offset[3:]}'
+        return parsed.strftime(f'%Y-%m-%dT%H:%M:%S{offset_formatted}')
+    except (ValueError, TypeError):
         return value
-    if re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}', value):
-        raise ValueError(
-            f"Invalid datetime: {value}. Timezone offset is required. "
-            "Must use format: 2026-06-22T15:00:00-04:00"
-        )
-    return value
 
 
 def _denormalize_datetime(value: str) -> str:

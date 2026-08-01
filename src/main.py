@@ -784,7 +784,7 @@ async def schedule_campaign(
 
     Args:
         id: Campaign ID (e.g. nmc_12345).
-        scheduled_for: ISO 8601 datetime with timezone offset, e.g. 2026-06-22T15:00:00-04:00 (UTC example: 2026-06-22T19:00:00+00:00). Must be in the future.
+        scheduled_for: ISO 8601 format (2026-06-22T15:00:00-04:00).
     """
     return await get_client().schedule_campaign(
         id, {"scheduled_for": scheduled_for}, get_user_token(),
@@ -1225,7 +1225,7 @@ async def send_transactional_message(
         mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>").
         mjml_content: Map of named MJML content slots for templates with <keila-content> tags (e.g. {"main": "<mj-text>Hi {{ contact.first_name }}</mj-text>"}).
         html_content: Map of named HTML content slots (e.g. {"main": "<p>Hi {{ contact.first_name }}</p>"}).
-        text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}). (Default: {})
+        text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}).
         assigns: Values made available to Liquid interpolation in the subject and body (e.g. {"magic_link": "https://example.com/reset?token=abc123"}).
         template_id: Template ID to render the message with (e.g. ntpl_12345).
     """
@@ -1289,7 +1289,7 @@ async def render_transactional_message(
         mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>").
         mjml_content: Map of named MJML content slots for templates with <keila-content> tags (e.g. {"main": "<mj-text>Hi {{ contact.first_name }}</mj-text>"}).
         html_content: Map of named HTML content slots (e.g. {"main": "<p>Hi {{ contact.first_name }}</p>"}).
-        text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}). (Default: {})
+        text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}).
         assigns: Values made available to Liquid interpolation in the subject and body (e.g. {"magic_link": "https://example.com/reset?token=abc123"}).
         template_id: Template ID to render the message with (e.g. ntpl_12345).
     """
