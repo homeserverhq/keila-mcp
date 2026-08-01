@@ -1,8 +1,9 @@
 import json
 import os
+import re
 import sys
 from contextvars import ContextVar
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
 from fastmcp import FastMCP, Context
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -45,6 +46,7 @@ def get_user_token() -> Optional[str]:
 ALLOW_ALL_AGGREGATE = os.getenv("ALLOW_ALL_AGGREGATE", "false").lower() in ("true", "1", "yes")
 IS_STATEFUL = os.getenv("IS_STATEFUL", "false").lower() in ("true", "1", "yes")
 
+
 # =============================================================================
 # Pydantic Typed Models (replaces all JSON-string params)
 # =============================================================================
@@ -66,8 +68,55 @@ class MessageAssigns(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+SEGMENT_FILTER_OPERATORS = frozenset({"$and", "$or", "$not", "$gt", "$gte", "$lt", "$lte", "$empty", "$in", "$like"})
+SEGMENT_FILTER_FIELDS = frozenset({"id", "email", "inserted_at", "first_name", "last_name", "status", "double_opt_in_at", "messages"})
+
+
 class SegmentFilter(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _check_filter(self):
+        _validate_filter(self.__pydantic_extra__ if hasattr(self, '__pydantic_extra__') and self.__pydantic_extra__ else self.model_dump(exclude_none=True))
+        return self
+
+
+def _validate_filter(f: Any, path: str = "") -> None:
+    if isinstance(f, dict):
+        for k, v in f.items():
+            cur = f"{path}.{k}" if path else k
+            if k.startswith("$"):
+                if k not in SEGMENT_FILTER_OPERATORS:
+                    raise ValueError(f"Segment filter: unknown operator '{k}' at '{cur}'. Allowed: {', '.join(sorted(SEGMENT_FILTER_OPERATORS))}")
+                if k == "$or" or k == "$and":
+                    if not isinstance(v, list):
+                        raise ValueError(f"Segment filter: '{k}' at '{cur}' must be a list of filter objects")
+                    for i, item in enumerate(v):
+                        _validate_filter(item, f"{cur}[{i}]")
+                elif k == "$not":
+                    _validate_filter(v, cur)
+                elif k == "$in":
+                    if not isinstance(v, list):
+                        raise ValueError(f"Segment filter: '\\$in' at '{cur}' must be a list of values")
+                elif k == "$empty":
+                    if not isinstance(v, bool):
+                        raise ValueError(f"Segment filter: '\\$empty' at '{cur}' must be true or false")
+                elif k in ("$gt", "$gte", "$lt", "$lte"):
+                    if not isinstance(v, (str, int, float)):
+                        raise ValueError(f"Segment filter: '{k}' at '{cur}' must be a number or date string")
+                elif k == "$like":
+                    if not isinstance(v, str):
+                        raise ValueError(f"Segment filter: '\\$like' at '{cur}' must be a string pattern")
+            else:
+                if k.startswith("data."):
+                    _validate_filter(v, cur)
+                else:
+                    if k not in SEGMENT_FILTER_FIELDS:
+                        raise ValueError(f"Segment filter: unknown field '{k}' at '{cur}'. Allowed fields: {', '.join(sorted(SEGMENT_FILTER_FIELDS))} or data.<path>")
+                    _validate_filter(v, cur)
+    elif isinstance(f, list):
+        for i, item in enumerate(f):
+            _validate_filter(item, f"{path}[{i}]")
 
 
 class BlockData(BaseModel):
@@ -126,7 +175,7 @@ class FormFieldAllowedValue(BaseModel):
 
 
 class FormField(BaseModel):
-    field: str = Field(
+    field: Literal["email", "first_name", "last_name", "data"] = Field(
         description="Contact field this form field maps to: email, first_name, last_name, or data",
     )
     required: Optional[bool] = Field(
@@ -139,9 +188,9 @@ class FormField(BaseModel):
     )
     key: Optional[str] = Field(
         default=None,
-        description='Data key to store the value under when field is "data" (e.g. city)',
+        description='Data key to store the value under when field is "data" (e.g. city). Required when field is "data".',
     )
-    type: Optional[str] = Field(
+    type: Optional[Literal["email", "string", "integer", "boolean", "enum", "tags", "array"]] = Field(
         default=None,
         description="Input type: email, string, integer, boolean, enum, tags, or array",
     )
@@ -161,6 +210,56 @@ class FormField(BaseModel):
         default=None,
         description='List of selectable options (label/value pairs) when type is "enum" (e.g. [{"label": "Option A", "value": "a"}])',
     )
+
+    @model_validator(mode="after")
+    def _check_form_field(self):
+        if self.field == "data":
+            if not self.key or not re.fullmatch(r"[a-zA-Z_]+", self.key or ""):
+                raise ValueError(
+                    f"field 'data' requires a 'key' (the custom data attribute name, e.g. \"city\"); "
+                    f"key must match ^[a-zA-Z_]+$, got {self.key!r}"
+                )
+        else:
+            if self.key is not None:
+                raise ValueError(f"'key' is only allowed when field is \"data\", got field={self.field!r}")
+        if self.type == "enum":
+            if not self.allowed_values or len(self.allowed_values) < 1:
+                raise ValueError("type 'enum' requires non-empty 'allowed_values' with label/value objects")
+        return self
+
+
+FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
+    "email": {"label": "Email", "type": "email", "cast": True, "required": True, "placeholder": ""},
+    "first_name": {"label": "First name", "type": "string", "cast": False, "required": False, "placeholder": ""},
+    "last_name": {"label": "Last name", "type": "string", "cast": False, "required": False, "placeholder": ""},
+}
+
+
+def _normalize_field(fld: dict[str, Any]) -> dict[str, Any]:
+    field_name = fld.get("field", "")
+    defaults = FIELD_DEFAULTS.get(field_name, {})
+    if field_name == "data" and "key" in fld:
+        defaults = {"label": fld["key"], "type": "string", "cast": False, "required": False, "placeholder": ""}
+    result = dict(defaults)
+    result.update({k: v for k, v in fld.items() if v is not None})
+    return result
+
+
+DEFAULT_FORM_SETTINGS: dict[str, Any] = {
+    "captcha_required": True,
+    "double_opt_in_required": False,
+    "csrf_disabled": True,
+    "body_bg_color": "#e5e7eb",
+    "form_bg_color": "#f9fafb",
+    "text_color": "#111827",
+    "submit_label": "Submit",
+    "submit_bg_color": "#047857",
+    "submit_text_color": "#f9fafb",
+    "input_bg_color": "#ffffff",
+    "input_border_color": "#6b7280",
+    "input_text_color": "#111827",
+    "success_text": "Thank you for signing up!",
+}
 
 
 class FormSettings(BaseModel):
@@ -252,7 +351,42 @@ class FormSettings(BaseModel):
         default=None,
         description="URL to redirect to after a failed form submission",
     )
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
+
+
+# =============================================================================
+# Validation Helpers
+# =============================================================================
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _validate_email(value: str, field_name: str = "email") -> str:
+    if not value or not _EMAIL_RE.match(value):
+        raise ValueError(f"{field_name} must be a valid email address, got {value!r}")
+    return value
+
+
+def _validate_message_recipient(recipient_email: str, contact_id: str, external_contact_id: str) -> None:
+    if not recipient_email and not contact_id and not external_contact_id:
+        raise ValueError(
+            "at least one recipient must be specified: one of recipient_email, contact_id, or external_contact_id"
+        )
+
+
+def _validate_message_body(params: dict[str, Any]) -> None:
+    msg_type = params.get("type", "")
+    body_fields = {"text": "text_body", "html": "html_body", "mjml": "mjml_body"}
+    body_field = body_fields.get(msg_type)
+    if body_field and not params.get(body_field) and not params.get("template_id"):
+        raise ValueError(
+            f"type '{msg_type}' requires a corresponding '{body_field}' or a 'template_id'"
+        )
+
+
+def _validate_message_subject(params: dict[str, Any]) -> None:
+    if not params.get("subject") and not params.get("template_id"):
+        raise ValueError("a subject or template_id is required")
 
 
 # =============================================================================
@@ -268,6 +402,11 @@ class CreateContactParam(BaseModel):
     status: str = "active"
     data: Optional[ContactData] = None
 
+    @model_validator(mode="after")
+    def _check(self):
+        _validate_email(self.email)
+        return self
+
 
 class UpdateContactParam(BaseModel):
     id: str
@@ -278,6 +417,12 @@ class UpdateContactParam(BaseModel):
     external_id: Optional[str] = None
     status: Optional[str] = None
     data: Optional[ContactData] = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.email:
+            _validate_email(self.email)
+        return self
 
 
 class UpdateContactDataParam(BaseModel):
@@ -352,6 +497,11 @@ class SubmitFormParam(BaseModel):
     external_id: str = ""
     status: str = "active"
     data: Optional[ContactData] = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        _validate_email(self.email)
+        return self
 
 
 class CreateSegmentParam(BaseModel):
@@ -473,7 +623,7 @@ async def create_contact(
     first_name: str = "",
     last_name: str = "",
     external_id: str = "",
-    status: str = "active",
+    status: Literal["active", "unsubscribed", "unreachable"] = "active",
     data: Optional[ContactData] = None,
     ctx: Context = None,
 ) -> dict[str, Any]:
@@ -505,7 +655,7 @@ async def update_contact(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     external_id: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[Literal["active", "unsubscribed", "unreachable"]] = None,
     data: Optional[ContactData] = None,
     ctx: Context = None,
 ) -> dict[str, Any]:
@@ -632,10 +782,13 @@ async def get_campaign_by_id(
     )
 
 
+CAMPAIGN_SETTINGS_TYPES = frozenset({"text", "markdown", "block", "mjml", "html"})
+
+
 @mcp.tool(tags={"write", "primary", "keila"})
 async def create_campaign(
     subject: str,
-    settings_type: str,
+    settings_type: Literal["text", "markdown", "block", "mjml", "html"],
     text_body: str = "",
     json_body: Optional[CampaignJsonBody] = None,
     mjml_body: str = "",
@@ -654,7 +807,7 @@ async def create_campaign(
 
     Args:
         subject: Subject line of the campaign (e.g. Our Space Book is Now Available!).
-        settings_type: markdown, text, block, mjml, or html.
+        settings_type: text, markdown, block, mjml, or html.
         text_body: Plain text body; supports Liquid (e.g. "Hi {{ contact.first_name }}, thanks for your order").
         json_body: Structured block content; use when settings_type is "block" (e.g. {"blocks": [{"type": "paragraph", "data": {"text": "Hello"}}]}).
         mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hello</mj-text></mj-column></mj-section></mj-body></mjml>").
@@ -699,7 +852,7 @@ async def update_campaign(
     html_content: Optional[ContentSlots] = None,
     text_content: Optional[ContentSlots] = None,
     data: Optional[CampaignData] = None,
-    settings_type: Optional[str] = None,
+    settings_type: Optional[Literal["text", "markdown", "block", "mjml", "html"]] = None,
     template_id: Optional[str] = None,
     sender_id: Optional[str] = None,
     segment_id: Optional[str] = None,
@@ -719,7 +872,7 @@ async def update_campaign(
         html_content: Map of named HTML content slots (e.g. {"main": "<p>Hi</p>"}).
         text_content: Map of named text content slots (e.g. {"main": "Hi"}).
         data: Custom campaign data available as campaign.data.<key> in Liquid (e.g. {"books": [{"title": "Space Book"}]}).
-        settings_type: markdown, text, block, mjml, or html.
+        settings_type: text, markdown, block, mjml, or html.
         template_id: Updated template ID (e.g. ntpl_12345).
         sender_id: Updated sender ID (e.g. nms_12345).
         segment_id: Updated segment ID (e.g. nsgm_12345).
@@ -837,7 +990,7 @@ async def create_form(
     sender_id: str = "",
     template_id: str = "",
     settings: Optional[FormSettings] = None,
-    fields: Optional[list[FormField]] = None,
+    fields: list[FormField] = [],
     ctx: Context = None,
 ) -> dict[str, Any]:
     """Create a new form.
@@ -846,14 +999,27 @@ async def create_form(
         name: Name of the new form (e.g. Newsletter Signup).
         sender_id: Sender ID used for confirmation emails (e.g. nms_12345).
         template_id: Template ID used for confirmation emails (e.g. ntpl_12345).
-        settings: Form settings object (see FormSettings), e.g. {"double_opt_in_required": false}.
-        fields: List of form field configurations (see FormField), e.g. [{"field": "email", "required": true, "cast": true}].
+        settings: Form settings object (see FormSettings). Any omitted settings are filled with safe defaults (captcha, colors, etc.).
+        fields: List of form field configurations (see FormField). At least one field with field="email" is required (e.g. [{"field": "email", "required": true, "cast": true}]). Custom fields use field="data" with a key (e.g. {"field": "data", "key": "city", "type": "string", "label": "City"}).
     """
-    params = CreateFormParam(
-        name=name, sender_id=sender_id, template_id=template_id,
-        settings=settings, fields=fields,
-    )
+    if not fields:
+        raise ValueError("fields must contain at least one field")
+    has_email = any(f.field == "email" for f in fields)
+    if not has_email:
+        raise ValueError("fields must include at least one field with field='email'")
+
+    raw_fields = [f.model_dump(exclude_unset=True, exclude_none=True) for f in fields]
+    normalized_fields = [_normalize_field(fld) for fld in raw_fields]
+
+    user_settings = settings.model_dump(exclude_none=True) if settings else {}
+    complete_settings = {}
+    for k, v in DEFAULT_FORM_SETTINGS.items():
+        complete_settings[k] = user_settings.get(k, v)
+
+    params = CreateFormParam(name=name, sender_id=sender_id, template_id=template_id)
     p = params.model_dump(exclude_unset=True, exclude_none=True)
+    p["fields"] = normalized_fields
+    p["settings"] = complete_settings
     if "sender_id" in p and not p.get("sender_id"):
         del p["sender_id"]
     if "template_id" in p and not p.get("template_id"):
@@ -880,15 +1046,24 @@ async def update_form(
         name: Updated name of the form.
         sender_id: Updated sender ID for confirmation emails (e.g. nms_12345).
         template_id: Updated template ID for confirmation emails (e.g. ntpl_12345).
-        settings: Form settings object (see FormSettings), e.g. {"double_opt_in_required": false}.
-        fields: List of form field configurations (see FormField), e.g. [{"field": "email", "required": true, "cast": true}].
+        settings: Form settings object (see FormSettings). Merged into existing settings (e.g. {"double_opt_in_required": false}).
+        fields: List of form field configurations (see FormField). If provided at least one field with field="email" is required (e.g. [{"field": "email", "required": true, "cast": true}]).
     """
-    params = UpdateFormParam(
-        id=id, name=name, sender_id=sender_id, template_id=template_id,
-        settings=settings, fields=fields,
-    )
+    normalized_fields = None
+    if fields is not None:
+        if not fields:
+            raise ValueError("fields must contain at least one field")
+        has_email = any(f.field == "email" for f in fields)
+        if not has_email:
+            raise ValueError("fields must include at least one field with field='email'")
+        raw_fields = [f.model_dump(exclude_unset=True, exclude_none=True) for f in fields]
+        normalized_fields = [_normalize_field(fld) for fld in raw_fields]
+
+    params = UpdateFormParam(id=id, name=name, sender_id=sender_id, template_id=template_id, settings=settings)
     p = params.model_dump(exclude_unset=True, exclude_none=True)
     p.pop("id", None)
+    if normalized_fields is not None:
+        p["fields"] = normalized_fields
     if "sender_id" in p and not p.get("sender_id"):
         del p["sender_id"]
     if "template_id" in p and not p.get("template_id"):
@@ -919,7 +1094,7 @@ async def submit_form(
     first_name: str = "",
     last_name: str = "",
     external_id: str = "",
-    status: str = "active",
+    status: Literal["active", "unsubscribed", "unreachable"] = "active",
     data: Optional[ContactData] = None,
     ctx: Context = None,
 ) -> dict[str, Any]:
@@ -994,7 +1169,7 @@ async def create_segment(
 
     Args:
         name: Name of the new segment (e.g. Rocket scientists and book enthusiasts).
-        filter: MongoDB-style filter object (e.g. {"email": {"$like": "%keila.io"}} or {"status": "active"}). Operators: $not, $or, $gt, $gte, $lt, $lte, $empty, $in, or $like; custom data fields via data.<field> (e.g. {"data.city": {"$in": ["Munich", "Berlin"]}}).
+        filter: MongoDB-style filter object (e.g. {"email": {"$like": "%keila.io"}} or {"status": "active"}). Operators: $not, $or, $gt, $gte, $lt, $lte, $empty, $in, or $like; custom data fields via data.<field> (e.g. {"data.city": {"$in": ["Munich", "Berlin"]}}). Valid fields: id, email, inserted_at, first_name, last_name, status, double_opt_in_at, or data.<path>.
     """
     params = CreateSegmentParam(name=name, filter=filter)
     p = params.model_dump(exclude_unset=True, exclude_none=True)
@@ -1078,10 +1253,13 @@ async def get_template_by_id(
     )
 
 
+TEMPLATE_TYPES = frozenset({"text", "html", "mjml", "hybrid"})
+
+
 @mcp.tool(tags={"write", "primary", "keila"})
 async def create_template(
     name: str,
-    type: str,
+    type: Literal["text", "html", "mjml", "hybrid"],
     mjml_body: str = "",
     html_body: str = "",
     text_body: str = "",
@@ -1114,7 +1292,7 @@ async def create_template(
 async def update_template(
     id: str,
     name: Optional[str] = None,
-    type: Optional[str] = None,
+    type: Optional[Literal["text", "html", "mjml", "hybrid"]] = None,
     mjml_body: Optional[str] = None,
     html_body: Optional[str] = None,
     text_body: Optional[str] = None,
@@ -1186,10 +1364,12 @@ async def list_all_senders(
 # Transactional Messages Tools
 # =============================================================================
 
+TRANSACTIONAL_TYPES = frozenset({"text", "html", "mjml"})
+
 
 @mcp.tool(tags={"write", "primary", "keila"})
 async def send_transactional_message(
-    type: str,
+    type: Literal["text", "html", "mjml"],
     sender_id: str,
     recipient_email: str = "",
     recipient_name: str = "",
@@ -1213,21 +1393,21 @@ async def send_transactional_message(
     Args:
         type: text, html, or mjml.
         sender_id: Sender ID (e.g. nms_12345).
-        recipient_email: Email address of the recipient (e.g. jane.doe@example.com).
+        recipient_email: Email address of the recipient (e.g. jane.doe@example.com). Required unless contact_id or external_contact_id is used.
         recipient_name: Name of the recipient (e.g. Jane Doe).
         cc: List of CC recipient email addresses (e.g. ["john@example.com"]) (Default: []).
         bcc: List of BCC recipient email addresses (e.g. ["jane@example.com"]) (Default: []).
-        contact_id: Contact ID to attach the message to (e.g. nc_12345).
-        external_contact_id: External ID of a contact (e.g. customer-1234).
-        subject: Subject of the message (e.g. Your order is confirmed).
-        text_body: Plain text body; supports Liquid (e.g. "Hi {{ contact.first_name }}, thanks for your order").
-        html_body: HTML body (e.g. "<p>Hi {{ contact.first_name }}, thanks for your order</p>").
-        mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>").
+        contact_id: Contact ID to attach the message to (e.g. nc_12345). Alternative to recipient_email.
+        external_contact_id: External ID of a contact (e.g. customer-1234). Alternative to recipient_email.
+        subject: Subject of the message (e.g. Your order is confirmed). Required if no template_id is given.
+        text_body: Plain text body; supports Liquid (e.g. "Hi {{ contact.first_name }}, thanks for your order"). Required when type is "text" and no template_id is given.
+        html_body: HTML body (e.g. "<p>Hi {{ contact.first_name }}, thanks for your order</p>"). Required when type is "html" and no template_id is given.
+        mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>"). Required when type is "mjml" and no template_id is given.
         mjml_content: Map of named MJML content slots for templates with <keila-content> tags (e.g. {"main": "<mj-text>Hi {{ contact.first_name }}</mj-text>"}).
         html_content: Map of named HTML content slots (e.g. {"main": "<p>Hi {{ contact.first_name }}</p>"}).
         text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}).
         assigns: Values made available to Liquid interpolation in the subject and body (e.g. {"magic_link": "https://example.com/reset?token=abc123"}).
-        template_id: Template ID to render the message with (e.g. ntpl_12345).
+        template_id: Template ID to render the message with (e.g. ntpl_12345). Alternative to subject and body.
     """
     params = TransactionalMessageParam(
         type=type, sender_id=sender_id,
@@ -1240,6 +1420,15 @@ async def send_transactional_message(
         template_id=template_id,
     )
     p = params.model_dump(exclude_unset=True, exclude_none=True)
+
+    _validate_message_recipient(
+        p.get("recipient_email", ""),
+        p.get("contact_id", ""),
+        p.get("external_contact_id", ""),
+    )
+    _validate_message_body(p)
+    _validate_message_subject(p)
+
     for key in ("template_id", "contact_id", "external_contact_id"):
         if key in p and not p[key]:
             del p[key]
@@ -1253,7 +1442,7 @@ async def send_transactional_message(
 
 @mcp.tool(tags={"write", "primary", "keila"})
 async def render_transactional_message(
-    type: str,
+    type: Literal["text", "html", "mjml"],
     sender_id: str,
     recipient_email: str = "",
     recipient_name: str = "",
@@ -1277,21 +1466,21 @@ async def render_transactional_message(
     Args:
         type: text, html, or mjml.
         sender_id: Sender ID (e.g. nms_12345).
-        recipient_email: Email address of the recipient (e.g. jane.doe@example.com).
+        recipient_email: Email address of the recipient (e.g. jane.doe@example.com). Required unless contact_id or external_contact_id is used.
         recipient_name: Name of the recipient (e.g. Jane Doe).
         cc: List of CC recipient email addresses (e.g. ["john@example.com"]) (Default: []).
         bcc: List of BCC recipient email addresses (e.g. ["jane@example.com"]) (Default: []).
-        contact_id: Contact ID to attach the message to (e.g. nc_12345).
-        external_contact_id: External ID of a contact (e.g. customer-1234).
-        subject: Subject of the message (e.g. Your order is confirmed).
-        text_body: Plain text body; supports Liquid (e.g. "Hi {{ contact.first_name }}, thanks for your order").
-        html_body: HTML body (e.g. "<p>Hi {{ contact.first_name }}, thanks for your order</p>").
-        mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>").
+        contact_id: Contact ID to attach the message to (e.g. nc_12345). Alternative to recipient_email.
+        external_contact_id: External ID of a contact (e.g. customer-1234). Alternative to recipient_email.
+        subject: Subject of the message (e.g. Your order is confirmed). Required if no template_id is given.
+        text_body: Plain text body; supports Liquid (e.g. "Hi {{ contact.first_name }}, thanks for your order"). Required when type is "text" and no template_id is given.
+        html_body: HTML body (e.g. "<p>Hi {{ contact.first_name }}, thanks for your order</p>"). Required when type is "html" and no template_id is given.
+        mjml_body: MJML markup body (e.g. "<mjml><mj-body><mj-section><mj-column><mj-text>Hi!</mj-text></mj-column></mj-section></mj-body></mjml>"). Required when type is "mjml" and no template_id is given.
         mjml_content: Map of named MJML content slots for templates with <keila-content> tags (e.g. {"main": "<mj-text>Hi {{ contact.first_name }}</mj-text>"}).
         html_content: Map of named HTML content slots (e.g. {"main": "<p>Hi {{ contact.first_name }}</p>"}).
         text_content: Map of named text content slots (e.g. {"main": "Hi {{ contact.first_name }}"}).
         assigns: Values made available to Liquid interpolation in the subject and body (e.g. {"magic_link": "https://example.com/reset?token=abc123"}).
-        template_id: Template ID to render the message with (e.g. ntpl_12345).
+        template_id: Template ID to render the message with (e.g. ntpl_12345). Alternative to subject and body.
     """
     params = TransactionalMessageParam(
         type=type, sender_id=sender_id,
@@ -1304,6 +1493,15 @@ async def render_transactional_message(
         template_id=template_id,
     )
     p = params.model_dump(exclude_unset=True, exclude_none=True)
+
+    _validate_message_recipient(
+        p.get("recipient_email", ""),
+        p.get("contact_id", ""),
+        p.get("external_contact_id", ""),
+    )
+    _validate_message_body(p)
+    _validate_message_subject(p)
+
     for key in ("template_id", "contact_id", "external_contact_id"):
         if key in p and not p[key]:
             del p[key]

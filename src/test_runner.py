@@ -207,6 +207,43 @@ async def run_test(
     return True
 
 
+async def run_expect_error(
+    session: MCPSession,
+    label: str,
+    tool: str,
+    params: dict[str, Any] = None,
+    must_contain: str = None,
+) -> bool:
+    if params is None:
+        params = {}
+    tested_tools.add(tool)
+    try:
+        result = await session.call_tool(tool, params)
+        err = is_error(result)
+    except Exception as e:
+        err = str(e)
+    if err:
+        if must_contain and must_contain.lower() not in err.lower():
+            results.append({
+                "label": label, "tool": tool, "status": "FAILED",
+                "reason": f"error did not mention {must_contain!r}: {err}"
+            })
+            log(f"  FAIL {label}: {err} (missing {must_contain!r})")
+            return False
+        results.append({
+            "label": label, "tool": tool, "status": "PASSED",
+            "data": {"expected_error": err}
+        })
+        log(f"  PASS {label} (expected error)")
+        return True
+    results.append({
+        "label": label, "tool": tool, "status": "FAILED",
+        "reason": "expected tool error but call succeeded"
+    })
+    log(f"  FAIL {label}: expected error but call succeeded")
+    return False
+
+
 async def run_test_with_store(
     session: MCPSession,
     label: str,
@@ -423,13 +460,13 @@ RESOURCE_TESTS = [
     {
         "label": "form",
         "create_tool": "create_form",
-        "create_params": {"name": make_name("Form")},
+        "create_params": {"name": make_name("Form"), "fields": [{"field": "email", "required": True, "cast": True}]},
         "list_tool": "list_all_forms",
         "get_tool": "get_form_by_id",
         "update_tool": "update_form",
         "update_params": {"name": f"Updated {make_name('Form')}"},
         "delete_tool": "delete_form_by_id",
-        "readback_verify": _verify_field("name", f"Updated {make_name('Form')}"),
+        "readback_verify": lambda d: None if isinstance(d, dict) and d.get("name") == f"Updated {make_name('Form')}" and isinstance(d.get("settings"), dict) and len(d["settings"]) > 5 else f"readback mismatch (settings empty or name wrong)",
     },
     {
         "label": "segment",
@@ -670,6 +707,88 @@ async def main():
             {"type": "text", "sender_id": TEST_SENDER_ID,
              "recipient_email": "solo@selfhostingbox.com",
              "subject": f"t{rid}-Send", "text_body": "Hello Solo"}
+        )
+
+        # ------------------------------------------------------------------
+        # Phase 4.5: Rejection Validation (negative tests)
+        # ------------------------------------------------------------------
+        log("\n=== Phase 4.5: Rejection Validation ===")
+
+        # D9a: create_form rejects invalid field enum
+        await run_expect_error(
+            session, "D9a create_form invalid field", "create_form",
+            {"name": make_name("BadFieldForm"), "fields": [{"field": "city"}]},
+            must_contain="email"
+        )
+
+        # D9b: create_form rejects data field without key
+        await run_expect_error(
+            session, "D9b create_form data no key", "create_form",
+            {"name": make_name("DataNoKeyForm"), "fields": [{"field": "data"}]},
+            must_contain="key"
+        )
+
+        # D9c: create_form rejects empty fields
+        await run_expect_error(
+            session, "D9c create_form empty fields", "create_form",
+            {"name": make_name("NoFieldsForm"), "fields": []},
+            must_contain="least one"
+        )
+
+        # D9d: create_form rejects missing email field
+        await run_expect_error(
+            session, "D9d create_form no email", "create_form",
+            {"name": make_name("NoEmailForm"), "fields": [{"field": "first_name"}]},
+            must_contain="email"
+        )
+
+        # D10a: create_contact rejects invalid email
+        await run_expect_error(
+            session, "D10a create_contact bad email", "create_contact",
+            {"email": "not-an-email"},
+            must_contain="email"
+        )
+
+        # D10b: create_contact rejects invalid status
+        await run_expect_error(
+            session, "D10b create_contact bad status", "create_contact",
+            {"email": make_name("BadStatus@example.com"), "status": "bogus"},
+            must_contain="bogus"
+        )
+
+        # D11a: create_template rejects invalid type
+        await run_expect_error(
+            session, "D11a create_template bad type", "create_template",
+            {"name": make_name("BadTypeTpl"), "type": "bogus"},
+            must_contain="bogus"
+        )
+
+        # D11b: create_campaign rejects invalid settings_type
+        await run_expect_error(
+            session, "D11b create_campaign bad settings_type", "create_campaign",
+            {"subject": make_name("BadSettings"), "settings_type": "bogus"},
+            must_contain="bogus"
+        )
+
+        # D12a: create_segment rejects invalid filter operator
+        await run_expect_error(
+            session, "D12a create_segment bad operator", "create_segment",
+            {"name": make_name("BadFilter"), "filter": {"email": {"$bad_op": "x"}}},
+            must_contain="$bad_op"
+        )
+
+        # D13a: send_transactional_message rejects missing recipient
+        await run_expect_error(
+            session, "D13a send_message no recipient", "send_transactional_message",
+            {"type": "text", "sender_id": TEST_SENDER_ID, "subject": "Test", "text_body": "Hello"},
+            must_contain="recipient"
+        )
+
+        # D13b: send_transactional_message rejects missing body
+        await run_expect_error(
+            session, "D13b send_message no body", "send_transactional_message",
+            {"type": "text", "sender_id": TEST_SENDER_ID, "recipient_email": "solo@selfhostingbox.com", "subject": "Test"},
+            must_contain="text_body"
         )
 
         # ------------------------------------------------------------------
