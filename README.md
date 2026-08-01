@@ -77,16 +77,6 @@ The MCP server serves at `http://keila-mcp:80/mcp` (Streamable HTTP).
 
 The server implements 34 MCP tools organized into the following categories:
 
-### 👥 Contacts (7 tools)
-
-- `list_all_contacts` — List all contact records
-- `get_contact_by_id` — Get a single contact by ID, email, or external ID
-- `create_contact` — Create a new contact
-- `update_contact` — Update an existing contact
-- `delete_contact_by_id` — Delete a contact by ID, email, or external ID
-- `update_contact_data` — Shallow-merge custom data fields on a contact
-- `replace_contact_data` — Replace all custom data fields on a contact
-
 ### 📧 Campaigns (7 tools)
 
 - `list_all_campaigns` — List all campaign records
@@ -97,6 +87,24 @@ The server implements 34 MCP tools organized into the following categories:
 - `send_campaign` — Queue a campaign for immediate delivery
 - `schedule_campaign` — Schedule a campaign for future delivery
 
+### 🎯 Segments (5 tools)
+
+- `list_all_segments` — List all segment records
+- `get_segment_by_id` — Get a single segment by ID
+- `create_segment` — Create a new segment
+- `update_segment` — Update an existing segment
+- `delete_segment_by_id` — Delete a segment by ID
+
+### 👥 Contacts (7 tools)
+
+- `list_all_contacts` — List all contact records
+- `get_contact_by_id` — Get a single contact by ID, email, or external ID
+- `create_contact` — Create a new contact
+- `update_contact` — Update an existing contact
+- `delete_contact_by_id` — Delete a contact by ID, email, or external ID
+- `update_contact_data` — Shallow-merge custom data fields on a contact
+- `replace_contact_data` — Replace all custom data fields on a contact
+
 ### 📝 Forms (6 tools)
 
 - `list_all_forms` — List all form records
@@ -105,14 +113,6 @@ The server implements 34 MCP tools organized into the following categories:
 - `update_form` — Update an existing form
 - `delete_form_by_id` — Delete a form by ID
 - `submit_form` — Submit a form to create or update a contact
-
-### 🎯 Segments (5 tools)
-
-- `list_all_segments` — List all segment records
-- `get_segment_by_id` — Get a single segment by ID
-- `create_segment` — Create a new segment
-- `update_segment` — Update an existing segment
-- `delete_segment_by_id` — Delete a segment by ID
 
 ### 📄 Templates (5 tools)
 
