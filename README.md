@@ -22,6 +22,9 @@ with full CRUD, transactional messaging, and system operations.
   default. Full objects are available via an `include_all_fields` flag.
 - **🧪 Comprehensive Testing** — 75 automated tests covering all tool
   domains, run via the test runner pipeline.
+- **🏷️ Tool Annotations** — All tools expose standard MCP ToolAnnotations
+  hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint). The
+  tags field carries grouping metadata (basic/primary/advanced + keila).
 
 ## 🔧 Environment Variables
 

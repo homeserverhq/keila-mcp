@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from typing import Any, Optional, Literal
 
 from fastmcp import FastMCP, Context
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from toon_mcp import json_to_toon
 
@@ -562,7 +563,9 @@ class TransactionalMessageParam(BaseModel):
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Check Server Status', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def check_server_status(ctx: Context = None) -> dict[str, Any]:
     """Check connectivity to the Keila backend."""
     return await get_client().check_server_status(get_user_token())
@@ -573,7 +576,9 @@ async def check_server_status(ctx: Context = None) -> dict[str, Any]:
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Contacts', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_contacts(
     page: int = 0,
     page_size: int = 50,
@@ -599,7 +604,9 @@ async def list_all_contacts(
     return {"items": json_to_toon(data)}
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Get Contact By Id', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def get_contact_by_id(
     id: str,
     id_type: str = "id",
@@ -618,7 +625,9 @@ async def get_contact_by_id(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Create Contact', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def create_contact(
     email: str,
     first_name: str = "",
@@ -648,7 +657,9 @@ async def create_contact(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Contact', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_contact(
     id: str,
     id_type: str = "id",
@@ -684,7 +695,9 @@ async def update_contact(
     )
 
 
-@mcp.tool(tags={"write", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Delete Contact By Id', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+)
 async def delete_contact_by_id(
     id: str,
     id_type: str = "id",
@@ -700,7 +713,9 @@ async def delete_contact_by_id(
     return {"deleted": True, "id": id}
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Contact Data', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_contact_data(
     id: str,
     data: ContactData,
@@ -722,7 +737,9 @@ async def update_contact_data(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Replace Contact Data', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def replace_contact_data(
     id: str,
     data: ContactData,
@@ -749,7 +766,9 @@ async def replace_contact_data(
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Campaigns', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_campaigns(
     include_all_fields: bool = False,
     ctx: Context = None,
@@ -766,7 +785,9 @@ async def list_all_campaigns(
     return {"items": json_to_toon(data)}
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Get Campaign By Id', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def get_campaign_by_id(
     id: str,
     include_all_fields: bool = False,
@@ -786,7 +807,9 @@ async def get_campaign_by_id(
 CAMPAIGN_SETTINGS_TYPES = frozenset({"text", "markdown", "block", "mjml", "html"})
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Create Campaign', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def create_campaign(
     subject: str,
     settings_type: Literal["text", "markdown", "block", "mjml", "html"],
@@ -841,7 +864,9 @@ async def create_campaign(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Campaign', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_campaign(
     id: str,
     subject: Optional[str] = None,
@@ -900,7 +925,9 @@ async def update_campaign(
     )
 
 
-@mcp.tool(tags={"write", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Delete Campaign By Id', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+)
 async def delete_campaign_by_id(
     id: str,
     ctx: Context = None,
@@ -914,7 +941,9 @@ async def delete_campaign_by_id(
     return {"deleted": True, "id": id}
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Send Campaign', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def send_campaign(
     id: str,
     ctx: Context = None,
@@ -928,7 +957,9 @@ async def send_campaign(
     return {"delivery_queued": result.get("delivery_queued", True), "campaign_id": id}
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Schedule Campaign', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def schedule_campaign(
     id: str,
     scheduled_for: str,
@@ -951,7 +982,9 @@ async def schedule_campaign(
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Forms', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_forms(
     include_all_fields: bool = False,
     ctx: Context = None,
@@ -968,7 +1001,9 @@ async def list_all_forms(
     return {"items": json_to_toon(data)}
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Get Form By Id', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def get_form_by_id(
     id: str,
     include_all_fields: bool = False,
@@ -985,7 +1020,9 @@ async def get_form_by_id(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Create Form', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def create_form(
     name: str,
     sender_id: str = "",
@@ -1030,7 +1067,9 @@ async def create_form(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Form', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_form(
     id: str,
     name: Optional[str] = None,
@@ -1074,7 +1113,9 @@ async def update_form(
     )
 
 
-@mcp.tool(tags={"write", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Delete Form By Id', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+)
 async def delete_form_by_id(
     id: str,
     ctx: Context = None,
@@ -1088,7 +1129,9 @@ async def delete_form_by_id(
     return {"deleted": True, "id": id}
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Submit Form', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def submit_form(
     id: str,
     email: str,
@@ -1126,7 +1169,9 @@ async def submit_form(
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Segments', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_segments(
     include_all_fields: bool = False,
     ctx: Context = None,
@@ -1143,7 +1188,9 @@ async def list_all_segments(
     return {"items": json_to_toon(data)}
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Get Segment By Id', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def get_segment_by_id(
     id: str,
     include_all_fields: bool = False,
@@ -1160,7 +1207,9 @@ async def get_segment_by_id(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Create Segment', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def create_segment(
     name: str,
     filter: SegmentFilter,
@@ -1179,7 +1228,9 @@ async def create_segment(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Segment', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_segment(
     id: str,
     name: Optional[str] = None,
@@ -1201,7 +1252,9 @@ async def update_segment(
     )
 
 
-@mcp.tool(tags={"write", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Delete Segment By Id', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+)
 async def delete_segment_by_id(
     id: str,
     ctx: Context = None,
@@ -1220,7 +1273,9 @@ async def delete_segment_by_id(
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Templates', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_templates(
     include_all_fields: bool = False,
     ctx: Context = None,
@@ -1237,7 +1292,9 @@ async def list_all_templates(
     return {"items": json_to_toon(data)}
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Get Template By Id', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def get_template_by_id(
     id: str,
     include_all_fields: bool = False,
@@ -1257,7 +1314,9 @@ async def get_template_by_id(
 TEMPLATE_TYPES = frozenset({"text", "html", "mjml", "hybrid"})
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Create Template', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def create_template(
     name: str,
     type: Literal["text", "html", "mjml", "hybrid"],
@@ -1289,7 +1348,9 @@ async def create_template(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Update Template', readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def update_template(
     id: str,
     name: Optional[str] = None,
@@ -1325,7 +1386,9 @@ async def update_template(
     )
 
 
-@mcp.tool(tags={"write", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='Delete Template By Id', readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
+)
 async def delete_template_by_id(
     id: str,
     ctx: Context = None,
@@ -1344,7 +1407,9 @@ async def delete_template_by_id(
 # =============================================================================
 
 
-@mcp.tool(tags={"read", "basic", "keila"})
+@mcp.tool(
+    tags={'basic', 'keila'}, annotations=ToolAnnotations(title='List All Senders', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def list_all_senders(
     include_all_fields: bool = False,
     ctx: Context = None,
@@ -1368,7 +1433,9 @@ async def list_all_senders(
 TRANSACTIONAL_TYPES = frozenset({"text", "html", "mjml"})
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Send Transactional Message', readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+)
 async def send_transactional_message(
     type: Literal["text", "html", "mjml"],
     sender_id: str,
@@ -1441,7 +1508,9 @@ async def send_transactional_message(
     )
 
 
-@mcp.tool(tags={"write", "primary", "keila"})
+@mcp.tool(
+    tags={'primary', 'keila'}, annotations=ToolAnnotations(title='Render Transactional Message', readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+)
 async def render_transactional_message(
     type: Literal["text", "html", "mjml"],
     sender_id: str,
